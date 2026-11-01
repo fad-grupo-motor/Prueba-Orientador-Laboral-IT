@@ -10,10 +10,13 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Gift, HandCoins, LoaderCircle, ShieldCheck } from 'lucide-react';
-import { authService } from '../../auth/authService';
+import { MIN_PASSWORD_LENGTH, authService, isDemoAuth } from '../../auth/authService';
+import { roleMismatchMessage } from '../../auth/messages';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '../../auth/demoAccounts';
 import type { UserRole, UserSession } from '../../types';
 import type { BackdropVariant } from './LoginBackdrop';
+import { useSmoothCardHeight } from './useSmoothCardHeight';
+import type { CardElements } from './useSmoothCardHeight';
 import fadLogoUrl from '../../assets/brand/fad-juventud-light.png';
 
 // three.js no debe bloquear el login: el fondo se descarga aparte.
@@ -62,6 +65,18 @@ const ROLE_CARDS: RoleCardContent[] = [
   }
 ];
 
+/** Logotipo de Google (la "G" de cuatro colores) para el botón de acceso. */
+function GoogleIcon() {
+  return (
+    <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
+}
+
 /** Lee el fondo guardado; si el almacenamiento falla, usa la red. */
 function readStoredBackdrop(): BackdropVariant {
   try {
@@ -73,17 +88,33 @@ function readStoredBackdrop(): BackdropVariant {
 }
 
 export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) => void }) {
-  // Perfil del formulario. Se conserva mientras la tarjeta gira de vuelta para que no "salte" el contenido.
-  const [formRole, setFormRole] = useState<UserRole | null>(null);
-  const [isFlipped, setIsFlipped] = useState<boolean>(false);
+  // Al volver de Google con un error (p. ej. cuenta de joven por la tarjeta de empresa), la pantalla
+  // abre la tarjeta elegida con el mensaje.
+  const [redirectError] = useState(() => authService.getRedirectError?.() ?? null);
 
+  // Perfil del formulario. Se conserva mientras la tarjeta gira de vuelta para que no "salte" el contenido.
+  const [formRole, setFormRole] = useState<UserRole | null>(redirectError?.role ?? null);
+  const [isFlipped, setIsFlipped] = useState<boolean>(redirectError !== null);
+
+  // "Crear cuenta" solo existe con Supabase; con las cuentas demo o la API solo se puede entrar.
+  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn');
+  const [signUpName, setSignUpName] = useState<string>('');
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPassword, setAuthPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isSubmittingAuth, setIsSubmittingAuth] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string>('');
+  const [authError, setAuthError] = useState<string>(redirectError?.message ?? '');
 
   const [backdrop, setBackdrop] = useState<BackdropVariant>(readStoredBackdrop);
+
+  // Card elements per role, so the flipped card's height can grow and shrink smoothly.
+  const cardsRef = useRef(new Map<string, CardElements>());
+  const cardRef = (role: UserRole, part: keyof CardElements) => (el: HTMLElement | null): void => {
+    const card = cardsRef.current.get(role) ?? { grid: null, front: null, back: null };
+    card[part] = el;
+    cardsRef.current.set(role, card);
+  };
+  useSmoothCardHeight(cardsRef, formRole, isFlipped, FLIP_MS, `${authMode}|${authError}`);
 
   const emailInputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
@@ -115,6 +146,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   /** Vuelve a la selección de perfil limpiando el formulario y devolviendo el foco. */
   const handleBackToRoles = useCallback((): void => {
     setIsFlipped(false);
+    setAuthMode('signIn');
     setAuthError('');
     setAuthPassword('');
     setShowPassword(false);
@@ -146,6 +178,11 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     e.preventDefault();
     setAuthError('');
 
+    if (authMode === 'signUp') {
+      await handleSignUp();
+      return;
+    }
+
     if (!authEmail.trim() || !authPassword) {
       setAuthError('Por favor introduce tu correo y contraseña.');
       return;
@@ -162,16 +199,66 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
 
     if (user.role !== formRole) {
       await authService.signOut();
-      setAuthError(
-        user.role === 'young'
-          ? 'Esta cuenta pertenece a un perfil de Jóvenes. Vuelve atrás y elige ese acceso.'
-          : 'Esta cuenta pertenece a un perfil de Empresa. Vuelve atrás y elige ese acceso.'
-      );
+      setAuthError(roleMismatchMessage(user.role));
       return;
     }
 
     setAuthPassword('');
     onLogin(user);
+  };
+
+  /** Crea la cuenta con el rol de la tarjeta elegida y, si va bien, entra directamente. */
+  const handleSignUp = async (): Promise<void> => {
+    if (!formRole || !authService.signUp) return;
+
+    if (!signUpName.trim() || !authEmail.trim() || !authPassword) {
+      setAuthError('Rellena todos los campos para crear la cuenta.');
+      return;
+    }
+    if (authPassword.length < MIN_PASSWORD_LENGTH) {
+      setAuthError(`La contraseña tiene que tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const { user, error } = await authService.signUp({
+      name: signUpName,
+      email: authEmail,
+      password: authPassword,
+      role: formRole
+    });
+    setIsSubmittingAuth(false);
+
+    if (!user) {
+      setAuthError(error);
+      return;
+    }
+    setAuthPassword('');
+    onLogin(user);
+  };
+
+  /** Cambia entre "Iniciar sesión" y "Crear cuenta" sin perder el correo escrito. */
+  const toggleAuthMode = (): void => {
+    setAuthMode(prev => (prev === 'signIn' ? 'signUp' : 'signIn'));
+    setAuthError('');
+    setAuthPassword('');
+    setShowPassword(false);
+  };
+
+  /**
+   * Entrar con Google: el rol es el de la tarjeta elegida. La web sale hacia Google y, al volver,
+   * App recupera la sesión con ese rol (ver src/auth/supabaseAuth.ts).
+   */
+  const handleGoogleSignIn = async (): Promise<void> => {
+    if (!formRole || !authService.signInWithGoogle) return;
+    setAuthError('');
+    setIsSubmittingAuth(true);
+    const { error } = await authService.signInWithGoogle(formRole);
+    // Si todo va bien el navegador ya se está yendo a Google: el botón sigue en "Abriendo…".
+    if (error) {
+      setIsSubmittingAuth(false);
+      setAuthError(error);
+    }
   };
 
   /** Cambia el fondo y lo recuerda en este navegador. */
@@ -187,29 +274,79 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   // Gira siempre la tarjeta elegida: el formulario aparece donde se ha pulsado, también en escritorio.
   // En escritorio la otra tarjeta se atenúa, pero sigue a mano para cambiar de perfil.
   const flippedSlot: UserRole | null = formRole;
-  const demoEmail = DEMO_ACCOUNTS.find(account => account.role === formRole)?.email;
+  const demoEmail = isDemoAuth ? DEMO_ACCOUNTS.find(account => account.role === formRole)?.email : undefined;
   const formCard = ROLE_CARDS.find(card => card.role === formRole);
+  const canSignUp = Boolean(authService.signUp);
+  const isSignUp = canSignUp && authMode === 'signUp';
 
   /** Cara trasera con el formulario de acceso para el perfil elegido. */
   const renderLoginForm = (): ReactNode => (
     <>
-      <div className="flex items-center justify-between gap-3 mb-6">
+      {/* "Volver" arriba, junto a la etiqueta: el formulario ocupa menos alto. */}
+      <div className="flex items-center justify-between gap-3 mb-3">
         <span className="badge-technical">{formCard?.accessLabel}</span>
+        <button
+          type="button"
+          onClick={handleBackToRoles}
+          className="min-h-11 -mr-2 px-2 inline-flex items-center gap-1.5 text-meta font-semibold text-fg-2 hover:text-fg rounded"
+        >
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          Volver
+        </button>
       </div>
 
-      <h2 className="font-display font-bold text-2xl tracking-[-0.015em] text-fg">Iniciar sesión</h2>
-      <p className="text-body text-fg-2 mt-1 mb-6">Introduce tus datos para acceder a tu panel.</p>
+      <h2 className="font-display font-bold text-xl tracking-[-0.015em] text-fg">
+        {isSignUp ? 'Crear cuenta' : 'Iniciar sesión'}
+      </h2>
+      <p className="text-body text-fg-2 mt-1 mb-4">
+        {isSignUp ? 'Es gratis y solo te llevará un minuto.' : 'Introduce tus datos para acceder a tu panel.'}
+      </p>
 
       {authError && (
         <div
           role="alert"
-          className="alert alert-danger mb-4"
+          className="alert alert-danger mb-3"
         >
           <p>{authError}</p>
         </div>
       )}
 
-      <form onSubmit={handleAuthSubmit} className="space-y-4" noValidate>
+      {authService.signInWithGoogle && (
+        <>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={isSubmittingAuth}
+            className="btn btn-secondary w-full"
+          >
+            {isSubmittingAuth ? <LoaderCircle className="w-4 h-4 animate-spin" aria-hidden="true" /> : <GoogleIcon />}
+            <span>{isSubmittingAuth ? 'Abriendo Google…' : 'Continuar con Google'}</span>
+          </button>
+          <div className="flex items-center gap-3 my-3 text-meta text-fg-3" aria-hidden="true">
+            <span className="h-px flex-1 bg-line" />
+            o con tu correo
+            <span className="h-px flex-1 bg-line" />
+          </div>
+        </>
+      )}
+
+      <form onSubmit={handleAuthSubmit} className="space-y-3" noValidate>
+        {isSignUp && (
+          <div>
+            <label htmlFor="auth-name" className="label-tech">
+              {formRole === 'company' ? 'Nombre de la empresa' : 'Nombre y apellidos'}
+            </label>
+            <input
+              id="auth-name"
+              type="text"
+              autoComplete={formRole === 'company' ? 'organization' : 'name'}
+              value={signUpName}
+              onChange={(e) => setSignUpName(e.target.value)}
+              className="input-technical"
+            />
+          </div>
+        )}
+
         <div>
           <label htmlFor="auth-email" className="label-tech">Correo electrónico</label>
           <input
@@ -227,12 +364,21 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
         </div>
 
         <div>
-          <label htmlFor="auth-password" className="label-tech">Contraseña</label>
+          {/* El requisito se ve antes de escribir (no solo como error al enviar), en la línea de la etiqueta. */}
+          <div className="flex items-baseline justify-between gap-3">
+            <label htmlFor="auth-password" className="label-tech">Contraseña</label>
+            {isSignUp && (
+              <span id="auth-password-hint" className="text-meta text-fg-2">
+                Mínimo {MIN_PASSWORD_LENGTH} caracteres
+              </span>
+            )}
+          </div>
           <div className="relative">
             <input
               id="auth-password"
               type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
+              autoComplete={isSignUp ? 'new-password' : 'current-password'}
+              aria-describedby={isSignUp ? 'auth-password-hint' : undefined}
               value={authPassword}
               onChange={(e) => setAuthPassword(e.target.value)}
               placeholder="••••••••"
@@ -251,12 +397,40 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
 
         <button type="submit" disabled={isSubmittingAuth} className="btn btn-primary w-full">
           {isSubmittingAuth && <LoaderCircle className="w-4 h-4 animate-spin" aria-hidden="true" />}
-          <span>{isSubmittingAuth ? 'Comprobando…' : 'Entrar en la plataforma'}</span>
+          <span>
+            {isSignUp
+              ? (isSubmittingAuth ? 'Creando la cuenta…' : 'Crear cuenta')
+              : (isSubmittingAuth ? 'Comprobando…' : 'Entrar en la plataforma')}
+          </span>
         </button>
-        <button type="button" onClick={handleBackToRoles} className="btn btn-secondary w-full">
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          Volver
-        </button>
+
+        {isSignUp && (
+          <p className="text-meta text-fg-2 leading-relaxed">
+            Al crear la cuenta aceptas la{' '}
+            <a
+              href="https://fad.es/politica-privacidad/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent-strong underline underline-offset-2"
+            >
+              política de privacidad
+            </a>{' '}
+            de Fundación Fad Juventud.
+          </p>
+        )}
+
+        {canSignUp && (
+          <p className="text-body text-fg-2 text-center">
+            {isSignUp ? '¿Ya tienes cuenta?' : '¿No tienes cuenta?'}{' '}
+            <button
+              type="button"
+              onClick={toggleAuthMode}
+              className="min-h-11 font-semibold text-accent-strong underline underline-offset-2"
+            >
+              {isSignUp ? 'Inicia sesión' : 'Regístrate'}
+            </button>
+          </p>
+        )}
       </form>
 
       {demoEmail && (
@@ -282,8 +456,9 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     </>
   );
 
+  // overflow-hidden: while the height animates, the taller face is clipped instead of spilling out.
   const faceBase =
-    'card-technical bg-surface p-5 md:p-8 flex flex-col [grid-area:1/1] [backface-visibility:hidden] ' +
+    'card-technical bg-surface p-5 md:p-8 flex flex-col overflow-hidden [grid-area:1/1] [backface-visibility:hidden] ' +
     'motion-reduce:transition-opacity motion-reduce:duration-200';
 
   return (
@@ -340,6 +515,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
                 className="[perspective:1400px]"
               >
                 <div
+                  ref={cardRef(card.role, 'grid')}
                   className={
                     'grid h-full [transform-style:preserve-3d] transition-transform duration-[600ms] ' +
                     'ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none motion-reduce:[transform:none] ' +
@@ -348,6 +524,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
                 >
                   {/* Cara delantera: presentación del perfil */}
                   <article
+                    ref={cardRef(card.role, 'front')}
                     inert={flipped}
                     aria-hidden={flipped || undefined}
                     className={
@@ -382,6 +559,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
 
                   {/* Cara trasera: formulario de acceso */}
                   <section
+                    ref={cardRef(card.role, 'back')}
                     inert={!flipped}
                     aria-hidden={!flipped || undefined}
                     aria-label={hasBack ? 'Iniciar sesión' : undefined}

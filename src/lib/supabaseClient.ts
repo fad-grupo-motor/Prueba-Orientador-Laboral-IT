@@ -2,7 +2,8 @@
  * @file supabaseClient.ts
  * @description Cliente único de Supabase para toda la app.
  *
- * Las credenciales se leen de `.env.local` (no se sube a GitHub). Vite las incrusta en el código
+ * Las credenciales se leen de `.env.development.local` (npm run dev) o `.env.production.local`
+ * (npm run build); ninguno se sube a GitHub. Vite las incrusta en el código
  * al hacer `npm run build`, así que la clave acaba siendo pública: por eso solo debe usarse la clave
  * "anon"/"publishable" y la seguridad la garantizan las políticas RLS de la base de datos.
  *
@@ -19,8 +20,10 @@ export const isSupabaseConfigured = Boolean(url && anonKey);
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(url!, anonKey!, {
-      // Por ahora solo se leen datos públicos: no hace falta guardar sesión de Supabase.
-      auth: { persistSession: false, autoRefreshToken: false }
+      // Login con Supabase Auth (src/auth/supabaseAuth.ts): la sesión se guarda en el navegador y
+      // se renueva sola. "pkce" es el modo recomendado para volver de Google: la URL trae un
+      // código de un solo uso que el cliente cambia por la sesión al cargar la página.
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' }
     })
   : null;
 

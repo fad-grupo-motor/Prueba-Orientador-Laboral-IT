@@ -3,21 +3,50 @@
  * @description Contrato común de autenticación y selección de la implementación activa.
  *
  * La app solo habla con `authService`, nunca con una implementación concreta.
- * Para migrar a Supabase basta con crear `supabaseAuth.ts` que cumpla `AuthService`
- * (signInWithPassword / signOut / getSession) y cambiar la exportación de abajo.
+ * Cuál se usa lo decide `VITE_AUTH_PROVIDER` (supabase | api | demo). Si no se indica:
+ * la API en Python si existe `VITE_API_URL`; si no, las cuentas demo.
  */
 
-import type { UserSession } from '../types';
+import type { UserRole, UserSession } from '../types';
 import { demoAuthService } from './demoAuth';
 import { apiAuthService } from './apiAuth';
+import { supabaseAuthService } from './supabaseAuth';
+import { supabase } from '../lib/supabaseClient';
 
 export type AuthResult =
   | { user: UserSession; error: null }
   | { user: null; error: string };
 
+export interface SignUpInput {
+  /** Nombre de la persona o de la empresa, según el rol. */
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+}
+
+/** Longitud mínima de contraseña. Debe coincidir con la de Supabase (Authentication → Email). */
+export const MIN_PASSWORD_LENGTH = 8;
+
 export interface AuthService {
   /** Valida credenciales y, si son correctas, persiste la sesión. */
   signIn(email: string, password: string): Promise<AuthResult>;
+  /**
+   * Crear cuenta con correo y contraseña (solo Supabase). Si va bien, deja la sesión iniciada
+   * con el rol de la tarjeta elegida.
+   */
+  signUp?(input: SignUpInput): Promise<AuthResult>;
+  /**
+   * Entrar con Google (solo Supabase). Sale de la web hacia Google y vuelve; al volver,
+   * `getSession()` devuelve la sesión con el rol elegido.
+   */
+  signInWithGoogle?(role: UserRole): Promise<{ error: string | null }>;
+  /**
+   * Error de la última vuelta desde Google (p. ej. cuenta de joven entrando por empresa), con la
+   * tarjeta que se había elegido. Leerlo no lo borra (React en modo estricto lee dos veces);
+   * se borra en el siguiente intento de entrar.
+   */
+  getRedirectError?(): { role: UserRole; message: string } | null;
   /** Elimina la sesión activa. */
   signOut(): Promise<void>;
   /** Devuelve la sesión guardada si sigue siendo válida. */
@@ -25,6 +54,18 @@ export interface AuthService {
 }
 
 const apiUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, '');
+const provider = import.meta.env.VITE_AUTH_PROVIDER ?? (apiUrl ? 'api' : 'demo');
 
-// Implementación activa: la API en Python si está configurada; si no, las cuentas demo.
-export const authService: AuthService = apiUrl ? apiAuthService(apiUrl) : demoAuthService;
+const pickService = (): AuthService => {
+  if (provider === 'supabase') {
+    if (supabase) return supabaseAuthService(supabase);
+    console.error('[auth] VITE_AUTH_PROVIDER=supabase, pero faltan VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY: se usan las cuentas demo.');
+  }
+  if (provider === 'api' && apiUrl) return apiAuthService(apiUrl);
+  return demoAuthService;
+};
+
+export const authService: AuthService = pickService();
+
+/** True cuando se usan las cuentas demo: la pantalla de login enseña la cuenta de prueba. */
+export const isDemoAuth = authService === demoAuthService;

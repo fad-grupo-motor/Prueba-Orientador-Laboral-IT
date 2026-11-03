@@ -94,16 +94,21 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
 
   // Perfil del formulario. Se conserva mientras la tarjeta gira de vuelta para que no "salte" el contenido.
   const [formRole, setFormRole] = useState<UserRole | null>(redirectError?.role ?? null);
-  const [isFlipped, setIsFlipped] = useState<boolean>(redirectError !== null);
+  const [isFlipped, setIsFlipped] = useState<boolean>(Boolean(redirectError?.role));
 
   // "Crear cuenta" solo existe con Supabase; con las cuentas demo o la API solo se puede entrar.
-  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn');
+  const [authMode, setAuthMode] = useState<'signIn' | 'signUp' | 'reset'>('signIn');
+  /** "Recuperar contraseña": el enlace ya se ha pedido. */
+  const [resetSent, setResetSent] = useState<boolean>(false);
   const [signUpName, setSignUpName] = useState<string>('');
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPassword, setAuthPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isSubmittingAuth, setIsSubmittingAuth] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string>(redirectError?.message ?? '');
+  // Error con tarjeta (p. ej. Google): se ve dentro del formulario. Sin tarjeta (enlace de correo
+  // caducado): se ve encima de las tarjetas.
+  const [authError, setAuthError] = useState<string>(redirectError?.role ? redirectError.message : '');
+  const linkError = redirectError && !redirectError.role ? redirectError.message : '';
 
   const [backdrop, setBackdrop] = useState<BackdropVariant>(readStoredBackdrop);
 
@@ -114,7 +119,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     card[part] = el;
     cardsRef.current.set(role, card);
   };
-  useSmoothCardHeight(cardsRef, formRole, isFlipped, FLIP_MS, `${authMode}|${authError}`);
+  useSmoothCardHeight(cardsRef, formRole, isFlipped, FLIP_MS, `${authMode}|${authError}|${resetSent}`);
 
   const emailInputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
@@ -147,6 +152,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   const handleBackToRoles = useCallback((): void => {
     setIsFlipped(false);
     setAuthMode('signIn');
+    setResetSent(false);
     setAuthError('');
     setAuthPassword('');
     setShowPassword(false);
@@ -237,6 +243,42 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     onLogin(user);
   };
 
+  /** Abre "Recuperar contraseña" en la misma tarjeta, conservando el correo ya escrito. */
+  const openPasswordReset = (): void => {
+    setAuthMode('reset');
+    setResetSent(false);
+    setAuthError('');
+    setAuthPassword('');
+    setShowPassword(false);
+  };
+
+  const closePasswordReset = (): void => {
+    setAuthMode('signIn');
+    setResetSent(false);
+    setAuthError('');
+  };
+
+  /** Pide el enlace. El mensaje de éxito no dice si el correo tiene cuenta (no revela quién está registrado). */
+  const handleResetSubmit = async (e: FormEvent): Promise<void> => {
+    e.preventDefault();
+    setAuthError('');
+    if (!authService.requestPasswordReset) return;
+    if (!authEmail.trim()) {
+      setAuthError('Escribe el correo de tu cuenta.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const { error } = await authService.requestPasswordReset(authEmail);
+    setIsSubmittingAuth(false);
+
+    if (error) {
+      setAuthError(error);
+      return;
+    }
+    setResetSent(true);
+  };
+
   /** Cambia entre "Iniciar sesión" y "Crear cuenta" sin perder el correo escrito. */
   const toggleAuthMode = (): void => {
     setAuthMode(prev => (prev === 'signIn' ? 'signUp' : 'signIn'));
@@ -278,6 +320,63 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   const formCard = ROLE_CARDS.find(card => card.role === formRole);
   const canSignUp = Boolean(authService.signUp);
   const isSignUp = canSignUp && authMode === 'signUp';
+  const canResetPassword = Boolean(authService.requestPasswordReset);
+
+  /** "¿Has olvidado tu contraseña?": pide el correo y manda el enlace para elegir una nueva. */
+  const renderResetForm = (): ReactNode => (
+    <>
+      <h2 className="font-display font-bold text-xl tracking-[-0.015em] text-fg">Recuperar contraseña</h2>
+      <p className="text-body text-fg-2 mt-1 mb-4">
+        Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una contraseña nueva.
+      </p>
+
+      {authError && (
+        <div role="alert" className="alert alert-danger mb-3">
+          <p>{authError}</p>
+        </div>
+      )}
+
+      {resetSent ? (
+        <div role="status" className="alert alert-ok mb-3">
+          <p>
+            Si hay una cuenta con <strong className="break-all">{authEmail.trim()}</strong>, te llegará un
+            correo en unos minutos. Revisa también la carpeta de correo no deseado.
+          </p>
+        </div>
+      ) : (
+        <form onSubmit={handleResetSubmit} className="space-y-3" noValidate>
+          <div>
+            <label htmlFor="reset-email" className="label-tech">Correo electrónico</label>
+            <input
+              id="reset-email"
+              type="email"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              placeholder="usuario@ejemplo.com"
+              className="input-technical"
+            />
+          </div>
+          <button type="submit" disabled={isSubmittingAuth} className="btn btn-primary w-full">
+            {isSubmittingAuth && <LoaderCircle className="w-4 h-4 animate-spin" aria-hidden="true" />}
+            <span>{isSubmittingAuth ? 'Enviando…' : 'Enviar enlace'}</span>
+          </button>
+        </form>
+      )}
+
+      <p className="text-body text-fg-2 text-center mt-3">
+        <button
+          type="button"
+          onClick={closePasswordReset}
+          className="min-h-11 font-semibold text-accent-strong underline underline-offset-2"
+        >
+          Volver a iniciar sesión
+        </button>
+      </p>
+    </>
+  );
 
   /** Cara trasera con el formulario de acceso para el perfil elegido. */
   const renderLoginForm = (): ReactNode => (
@@ -295,6 +394,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
         </button>
       </div>
 
+      {authMode === 'reset' ? renderResetForm() : (
+      <>
       <h2 className="font-display font-bold text-xl tracking-[-0.015em] text-fg">
         {isSignUp ? 'Crear cuenta' : 'Iniciar sesión'}
       </h2>
@@ -367,10 +468,19 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
           {/* El requisito se ve antes de escribir (no solo como error al enviar), en la línea de la etiqueta. */}
           <div className="flex items-baseline justify-between gap-3">
             <label htmlFor="auth-password" className="label-tech">Contraseña</label>
-            {isSignUp && (
+            {isSignUp ? (
               <span id="auth-password-hint" className="text-meta text-fg-2">
                 Mínimo {MIN_PASSWORD_LENGTH} caracteres
               </span>
+            ) : canResetPassword && (
+              // Junto al campo de contraseña, donde lo buscan las personas (como en las webs habituales).
+              <button
+                type="button"
+                onClick={openPasswordReset}
+                className="text-meta font-semibold text-accent-strong underline underline-offset-2"
+              >
+                ¿Has olvidado tu contraseña?
+              </button>
             )}
           </div>
           <div className="relative">
@@ -453,6 +563,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
           </button>
         </div>
       )}
+      </>
+      )}
     </>
   );
 
@@ -499,6 +611,12 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
             ))}
           </ul>
         </header>
+
+        {linkError && (
+          <div role="alert" className="alert alert-danger mb-4 max-w-3xl">
+            <p>{linkError}</p>
+          </div>
+        )}
 
         {/* Tarjetas de perfil con giro 3D */}
         <div className="grid md:grid-cols-2 gap-3 md:gap-4">

@@ -42,11 +42,20 @@ export interface AuthService {
    */
   signInWithGoogle?(role: UserRole): Promise<{ error: string | null }>;
   /**
-   * Error de la última vuelta desde Google (p. ej. cuenta de joven entrando por empresa), con la
-   * tarjeta que se había elegido. Leerlo no lo borra (React en modo estricto lee dos veces);
-   * se borra en el siguiente intento de entrar.
+   * Error de la última vuelta a la web (desde Google o desde un enlace de correo), con la tarjeta
+   * que se había elegido si se sabe (`role: null` si no). Leerlo no lo borra (React en modo
+   * estricto lee dos veces); se borra en el siguiente intento de entrar.
    */
-  getRedirectError?(): { role: UserRole; message: string } | null;
+  getRedirectError?(): { role: UserRole | null; message: string } | null;
+  /**
+   * Envía el correo para elegir una contraseña nueva (solo Supabase). Por seguridad no dice si el
+   * correo tiene cuenta: solo devuelve error si no se ha podido enviar.
+   */
+  requestPasswordReset?(email: string): Promise<{ error: string | null }>;
+  /** True si se ha entrado desde el enlace de "restablecer contraseña": falta elegir la nueva. */
+  isPasswordRecovery?(): boolean;
+  /** Guarda la contraseña nueva de la persona que ha entrado desde el enlace de recuperación. */
+  updatePassword?(password: string): Promise<AuthResult>;
   /** Elimina la sesión activa. */
   signOut(): Promise<void>;
   /** Devuelve la sesión guardada si sigue siendo válida. */

@@ -44,7 +44,8 @@ import { gapSkillList, planGaps } from './lib/courseRecommendations';
 import { scoreAnswer } from './lib/answerScore';
 
 // Ofertas de empleo y perfil del joven (diagnóstico ampliado, guardado por email)
-import { Briefcase as OffersIcon } from 'lucide-react';
+import { Briefcase as OffersIcon, UserCog } from 'lucide-react';
+import AccountSettings from './components/account/AccountSettings';
 import OffersSection from './components/offers/OffersSection';
 import type { OffersView } from './components/offers/OffersSection';
 import OffersNotice from './components/offers/OffersNotice';
@@ -97,7 +98,8 @@ const YOUNG_NAV: NavItem[] = [
   { id: 'offers', label: 'Ofertas', shortLabel: 'Ofertas', icon: OffersIcon },
   { id: 'interview', label: 'Simulador de entrevista', shortLabel: 'Entrevista', icon: Terminal },
   { id: 'ask', label: 'Consultas al mentor', shortLabel: 'Mentor', icon: MessageSquare },
-  { id: 'training', label: 'Formación recomendada', shortLabel: 'Formación', icon: GraduationCap }
+  { id: 'training', label: 'Formación recomendada', shortLabel: 'Formación', icon: GraduationCap },
+  { id: 'account', label: 'Mi cuenta', shortLabel: 'Cuenta', icon: UserCog }
 ];
 
 const EXPERIENCE_LABELS: Record<string, string> = {
@@ -472,7 +474,8 @@ export default function App() {
       ),
       activeId: activeTabYoung,
       onSelect: setActiveTabYoung,
-      onLogout: handleLogout
+      onLogout: handleLogout,
+      onOpenAccount: () => setActiveTabYoung('account')
     };
     const currentQuestion = filteredQuestions[currentQuestionIdx];
     const filledJobs = workExperience.filter(item => item.role.trim()).length;
@@ -1134,6 +1137,17 @@ export default function App() {
             <TrainingRecommender userEmail={currentUser.email} knownSkills={techStack} planGapSkills={planGapSkills} />
           )}
 
+          {activeTabYoung === 'account' && (
+            <div className="page flex-1 animate-enter">
+              <AccountSettings
+                user={currentUser}
+                onLogout={handleLogout}
+                onUserChange={setCurrentUser}
+                onAccountDeleted={() => setCurrentUser(null)}
+              />
+            </div>
+          )}
+
         </main>
       </div>
     );
@@ -1142,5 +1156,12 @@ export default function App() {
   // ============================================================================
   // RENDER: MÓDULO DE EMPRESAS (ACCESO AUTENTICADO BLOQUEADO POR ROL)
   // ============================================================================
-  return <CompanyPanel user={currentUser} onLogout={handleLogout} />;
+  return (
+    <CompanyPanel
+      user={currentUser}
+      onLogout={handleLogout}
+      onUserChange={setCurrentUser}
+      onAccountDeleted={() => setCurrentUser(null)}
+    />
+  );
 }

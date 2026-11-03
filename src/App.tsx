@@ -23,6 +23,7 @@ import { authService } from './auth/authService';
 
 // Pantalla de acceso con volteo de fichas
 import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordScreen from './components/auth/ResetPasswordScreen';
 
 // Estructura común de los paneles e indicadores
 import { MobileHeader, PageHeader, Sidebar } from './components/common/AppShell';
@@ -156,9 +157,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [isSessionLoading, setIsSessionLoading] = useState<boolean>(true);
 
+  /** Ha entrado desde el enlace "Restablece tu contraseña": antes del panel, elige la nueva. */
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState<boolean>(false);
+
   useEffect(() => {
     authService.getSession()
-      .then(setCurrentUser)
+      .then(user => {
+        setCurrentUser(user);
+        setIsPasswordRecovery(authService.isPasswordRecovery?.() ?? false);
+      })
       .finally(() => setIsSessionLoading(false));
   }, []);
 
@@ -428,6 +435,21 @@ export default function App() {
   // ============================================================================
   // RENDER: PANTALLA DE BIENVENIDA, SELECCIÓN DE ROL Y ACCESO
   // ============================================================================
+  if (currentUser && isPasswordRecovery) {
+    return (
+      <ResetPasswordScreen
+        onDone={(user) => {
+          setIsPasswordRecovery(false);
+          setCurrentUser(user);
+        }}
+        onCancel={() => {
+          setIsPasswordRecovery(false);
+          void handleLogout();
+        }}
+      />
+    );
+  }
+
   if (!currentUser) {
     return <LoginScreen onLogin={setCurrentUser} />;
   }

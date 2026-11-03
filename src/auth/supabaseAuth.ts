@@ -39,6 +39,30 @@ const clearPendingRole = (): void => {
   }
 };
 
+/**
+ * Links in the auth emails (supabase/templates) point to the site with "?token_hash=…&type=…".
+ * The web checks that code with Supabase, so the link works on any device, not only in the
+ * browser where it was requested.
+ */
+type EmailLinkType = 'email' | 'recovery' | 'email_change';
+const EMAIL_LINK_TYPES: readonly string[] = ['email', 'recovery', 'email_change'];
+
+const readEmailLink = (): { tokenHash: string; type: EmailLinkType } | null => {
+  const params = new URLSearchParams(window.location.search);
+  const tokenHash = params.get('token_hash');
+  const type = params.get('type');
+  if (!tokenHash || !type || !EMAIL_LINK_TYPES.includes(type)) return null;
+  return { tokenHash, type: type as EmailLinkType };
+};
+
+/** Removes the one-time code from the address bar (and from the browser history). */
+const clearEmailLinkFromUrl = (): void => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('token_hash');
+  url.searchParams.delete('type');
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+};
+
 const displayName = (user: User): string => {
   const meta = user.user_metadata as { full_name?: string; name?: string } | undefined;
   return meta?.full_name || meta?.name || user.email?.split('@')[0] || 'Usuario';
@@ -65,8 +89,12 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
     return data === 'talent' || data === 'company' ? fromDbRole(data) : null;
   };
 
-  /** Error of the last return from Google, shown once by the login screen. */
-  let redirectError: { role: UserRole; message: string } | null = null;
+  /** Error of the last return to the site (Google or email link), shown by the login screen. */
+  let redirectError: { role: UserRole | null; message: string } | null = null;
+  /** Signed in from a "reset password" link: the new password is still to be chosen. */
+  let recoveryMode = false;
+  /** getSession() in progress: React runs effects twice in development, so share the same call. */
+  let sessionRequest: Promise<UserSession | null> | null = null;
 
   /** Builds the web session; null if the user still has no role. */
   const toSession = async (user: User): Promise<UserSession | null> => {
@@ -167,20 +195,76 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
       return redirectError;
     },
 
+    async requestPasswordReset(email) {
+      redirectError = null;
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin
+      });
+      if (error) {
+        console.error('[auth] resetPasswordForEmail failed:', error.code, error.message);
+        if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+          return { error: 'Has pedido varios enlaces seguidos. Espera un minuto y vuelve a intentarlo.' };
+        }
+        return { error: 'No se ha podido enviar el correo. Inténtalo de nuevo.' };
+      }
+      return { error: null };
+    },
+
+    isPasswordRecovery() {
+      return recoveryMode;
+    },
+
+    async updatePassword(password) {
+      const { data, error } = await supabase.auth.updateUser({ password });
+      if (error || !data.user) {
+        console.error('[auth] updateUser failed:', error?.code, error?.message);
+        if (error?.code === 'same_password') {
+          return { user: null, error: 'La contraseña nueva tiene que ser distinta de la anterior.' };
+        }
+        if (error?.code === 'weak_password') {
+          return { user: null, error: 'La contraseña es demasiado débil. Usa al menos 8 caracteres y evita las muy comunes.' };
+        }
+        return { user: null, error: 'No se ha podido guardar la contraseña. Pide un enlace nuevo e inténtalo otra vez.' };
+      }
+      recoveryMode = false;
+      const user = await toSession(data.user);
+      if (!user) return { user: null, error: 'Tu cuenta no tiene un perfil asignado. Escríbenos para revisarlo.' };
+      return { user, error: null };
+    },
+
     async signOut() {
+      recoveryMode = false;
       const { error } = await supabase.auth.signOut();
       if (error) console.error('[auth] signOut failed:', error.message);
     },
 
-    async getSession() {
-      // On the way back from Google the client first swaps the "?code=" in the URL for a session.
-      const { data, error } = await supabase.auth.getSession();
-      if (error) console.error('[auth] getSession failed:', error.message);
-      if (!data.session) {
-        clearPendingRole();
-        return null;
-      }
-      return toSession(data.session.user);
+    getSession() {
+      sessionRequest ??= (async () => {
+        // Link from an auth email: check its one-time code and open the session.
+        const link = readEmailLink();
+        if (link) {
+          clearEmailLinkFromUrl();
+          const { error } = await supabase.auth.verifyOtp({ token_hash: link.tokenHash, type: link.type });
+          if (error) {
+            console.error('[auth] verifyOtp failed:', error.code, error.message);
+            redirectError = { role: null, message: 'El enlace ha caducado o ya se ha usado. Pide uno nuevo.' };
+            return null;
+          }
+          if (link.type === 'recovery') recoveryMode = true;
+        }
+
+        // On the way back from Google the client first swaps the "?code=" in the URL for a session.
+        const { data, error } = await supabase.auth.getSession();
+        if (error) console.error('[auth] getSession failed:', error.message);
+        if (!data.session) {
+          clearPendingRole();
+          return null;
+        }
+        return toSession(data.session.user);
+      })().finally(() => {
+        sessionRequest = null;
+      });
+      return sessionRequest;
     }
   };
 }

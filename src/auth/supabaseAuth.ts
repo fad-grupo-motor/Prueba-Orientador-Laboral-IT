@@ -125,6 +125,14 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
     async signIn(email, password) {
       redirectError = null;
       const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      // Right password but the email was never confirmed: say so (and offer to resend the email).
+      if (error?.code === 'email_not_confirmed') {
+        return {
+          user: null,
+          code: 'email_not_confirmed',
+          error: 'Aún no has confirmado tu correo. Abre el enlace que te enviamos al registrarte (mira también en correo no deseado).'
+        };
+      }
       if (error || !data.user) {
         // Same message for unknown email and wrong password: does not reveal which accounts exist.
         return { user: null, error: 'Correo o contraseña incorrectos.' };
@@ -159,8 +167,10 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
         return { user: null, error: 'No se ha podido crear la cuenta. Inténtalo de nuevo.' };
       }
       // With "Confirm email" on in Supabase there is no session until the email link is opened.
+      // (If the email already had an account, Supabase answers the same way on purpose: it does not
+      // reveal who is registered.)
       if (!data.session || !data.user) {
-        return { user: null, error: 'Te hemos enviado un correo para confirmar la cuenta. Ábrelo y vuelve a entrar.' };
+        return { user: null, error: null, needsConfirmation: true };
       }
       const user = await toSession(data.user);
       if (!user) {
@@ -193,6 +203,18 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
 
     getRedirectError() {
       return redirectError;
+    },
+
+    async resendConfirmation(email) {
+      const { error } = await supabase.auth.resend({ type: 'signup', email: email.trim() });
+      if (error) {
+        console.error('[auth] resend failed:', error.code, error.message);
+        if (error.status === 429 || error.code === 'over_email_send_rate_limit') {
+          return { error: 'Acabamos de enviarte un correo. Espera un minuto antes de pedir otro.' };
+        }
+        return { error: 'No se ha podido reenviar el correo. Inténtalo de nuevo.' };
+      }
+      return { error: null };
     },
 
     async requestPasswordReset(email) {

@@ -109,6 +109,33 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   // caducado): se ve encima de las tarjetas.
   const [authError, setAuthError] = useState<string>(redirectError?.role ? redirectError.message : '');
   const linkError = redirectError && !redirectError.role ? redirectError.message : '';
+  /** Aviso en verde (p. ej. "te hemos enviado un correo para confirmar la cuenta"). */
+  const [authNotice, setAuthNotice] = useState<string>('');
+  /** Correo con la cuenta sin confirmar: permite pedir otra vez el correo de confirmación. */
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string>('');
+  const [isResending, setIsResending] = useState<boolean>(false);
+
+  /** Borra errores y avisos al cambiar de pantalla o volver a enviar. */
+  const clearMessages = (): void => {
+    setAuthError('');
+    setAuthNotice('');
+    setUnconfirmedEmail('');
+  };
+
+  /** "Reenviar el correo de confirmación" (si se perdió o caducó). */
+  const handleResendConfirmation = async (): Promise<void> => {
+    if (!unconfirmedEmail || !authService.resendConfirmation) return;
+    setIsResending(true);
+    const { error } = await authService.resendConfirmation(unconfirmedEmail);
+    setIsResending(false);
+    if (error) {
+      setAuthNotice('');
+      setAuthError(error);
+      return;
+    }
+    setAuthError('');
+    setAuthNotice(`Te hemos vuelto a enviar el correo a ${unconfirmedEmail}. Pulsa el enlace para activar tu cuenta.`);
+  };
 
   const [backdrop, setBackdrop] = useState<BackdropVariant>(readStoredBackdrop);
 
@@ -119,7 +146,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     card[part] = el;
     cardsRef.current.set(role, card);
   };
-  useSmoothCardHeight(cardsRef, formRole, isFlipped, FLIP_MS, `${authMode}|${authError}|${resetSent}`);
+  useSmoothCardHeight(cardsRef, formRole, isFlipped, FLIP_MS, `${authMode}|${authError}|${authNotice}|${unconfirmedEmail}|${resetSent}`);
 
   const emailInputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
@@ -139,7 +166,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   const handleChooseRole = (role: UserRole, e: ReactMouseEvent<HTMLButtonElement>): void => {
     openerRef.current = e.currentTarget;
     if (formRole !== role) {
-      setAuthError('');
+      clearMessages();
       setAuthPassword('');
       setShowPassword(false);
     }
@@ -153,7 +180,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     setIsFlipped(false);
     setAuthMode('signIn');
     setResetSent(false);
-    setAuthError('');
+    clearMessages();
     setAuthPassword('');
     setShowPassword(false);
     schedule(() => openerRef.current?.focus({ preventScroll: true }), 50);
@@ -182,7 +209,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
    */
   const handleAuthSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    setAuthError('');
+    clearMessages();
 
     if (authMode === 'signUp') {
       await handleSignUp();
@@ -195,13 +222,15 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     }
 
     setIsSubmittingAuth(true);
-    const { user, error } = await authService.signIn(authEmail, authPassword);
+    const result = await authService.signIn(authEmail, authPassword);
     setIsSubmittingAuth(false);
 
-    if (!user) {
-      setAuthError(error);
+    if (!result.user) {
+      setAuthError(result.error);
+      if (result.code === 'email_not_confirmed') setUnconfirmedEmail(authEmail.trim());
       return;
     }
+    const user = result.user;
 
     if (user.role !== formRole) {
       await authService.signOut();
@@ -227,7 +256,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     }
 
     setIsSubmittingAuth(true);
-    const { user, error } = await authService.signUp({
+    const result = await authService.signUp({
       name: signUpName,
       email: authEmail,
       password: authPassword,
@@ -235,19 +264,29 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
     });
     setIsSubmittingAuth(false);
 
-    if (!user) {
-      setAuthError(error);
+    // "Confirm email" activado: la cuenta existe pero se activa desde el correo.
+    if ('needsConfirmation' in result) {
+      const email = authEmail.trim();
+      setAuthMode('signIn');
+      setAuthPassword('');
+      setShowPassword(false);
+      setAuthNotice(`Te hemos enviado un correo a ${email}. Pulsa el enlace del correo para activar tu cuenta y entrar. Si no lo ves, mira en correo no deseado.`);
+      setUnconfirmedEmail(email);
+      return;
+    }
+    if (!result.user) {
+      setAuthError(result.error);
       return;
     }
     setAuthPassword('');
-    onLogin(user);
+    onLogin(result.user);
   };
 
   /** Abre "Recuperar contraseña" en la misma tarjeta, conservando el correo ya escrito. */
   const openPasswordReset = (): void => {
     setAuthMode('reset');
     setResetSent(false);
-    setAuthError('');
+    clearMessages();
     setAuthPassword('');
     setShowPassword(false);
   };
@@ -255,13 +294,13 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   const closePasswordReset = (): void => {
     setAuthMode('signIn');
     setResetSent(false);
-    setAuthError('');
+    clearMessages();
   };
 
   /** Pide el enlace. El mensaje de éxito no dice si el correo tiene cuenta (no revela quién está registrado). */
   const handleResetSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    setAuthError('');
+    clearMessages();
     if (!authService.requestPasswordReset) return;
     if (!authEmail.trim()) {
       setAuthError('Escribe el correo de tu cuenta.');
@@ -282,7 +321,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
   /** Cambia entre "Iniciar sesión" y "Crear cuenta" sin perder el correo escrito. */
   const toggleAuthMode = (): void => {
     setAuthMode(prev => (prev === 'signIn' ? 'signUp' : 'signIn'));
-    setAuthError('');
+    clearMessages();
     setAuthPassword('');
     setShowPassword(false);
   };
@@ -293,7 +332,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
    */
   const handleGoogleSignIn = async (): Promise<void> => {
     if (!formRole || !authService.signInWithGoogle) return;
-    setAuthError('');
+    clearMessages();
     setIsSubmittingAuth(true);
     const { error } = await authService.signInWithGoogle(formRole);
     // Si todo va bien el navegador ya se está yendo a Google: el botón sigue en "Abriendo…".
@@ -410,6 +449,27 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
         >
           <p>{authError}</p>
         </div>
+      )}
+
+      {authNotice && (
+        <div role="status" className="alert alert-ok mb-3">
+          <p>{authNotice}</p>
+        </div>
+      )}
+
+      {/* Cuenta sin confirmar: el correo pudo perderse o caducar (dura una hora). */}
+      {unconfirmedEmail && authService.resendConfirmation && (
+        <p className="text-meta text-fg-2 -mt-1 mb-3">
+          ¿No te ha llegado?{' '}
+          <button
+            type="button"
+            onClick={handleResendConfirmation}
+            disabled={isResending}
+            className="min-h-11 font-semibold text-accent-strong underline underline-offset-2"
+          >
+            {isResending ? 'Enviando…' : 'Reenviar el correo de confirmación'}
+          </button>
+        </p>
       )}
 
       {authService.signInWithGoogle && (

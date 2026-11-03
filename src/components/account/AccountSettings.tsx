@@ -135,14 +135,15 @@ export default function AccountSettings({ user, onLogout, onUserChange, onAccoun
         : 'Entras con tu correo y contraseña.';
 
   return (
-    <>
+    // Página de ajustes: una sola columna centrada, cabecera incluida (como en las webs habituales).
+    <div className="max-w-2xl mx-auto">
       <PageHeader
         eyebrow="Ajustes"
         title="Mi cuenta"
         description="Tus datos, cómo entras en el Orientador y la opción de eliminar tu cuenta."
       />
 
-      <div className="max-w-2xl space-y-4">
+      <div className="space-y-4">
         {/* 1. Datos */}
         <section className="card p-5 md:p-6" aria-labelledby="account-data-title">
           <h3 id="account-data-title" className="font-display font-bold text-lg text-fg mb-4">
@@ -272,6 +273,6 @@ export default function AccountSettings({ user, onLogout, onUserChange, onAccoun
           </p>
         </ConfirmDialog>
       )}
-    </>
+    </div>
   );
 }

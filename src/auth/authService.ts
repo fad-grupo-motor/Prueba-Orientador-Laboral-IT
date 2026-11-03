@@ -15,7 +15,13 @@ import { supabase } from '../lib/supabaseClient';
 
 export type AuthResult =
   | { user: UserSession; error: null }
-  | { user: null; error: string };
+  | { user: null; error: string; code?: AuthErrorCode };
+
+/** Errores que la pantalla trata aparte (p. ej. para ofrecer "Reenviar el correo"). */
+export type AuthErrorCode = 'email_not_confirmed';
+
+/** Resultado de crear cuenta: entra directamente, o (con "Confirm email") tiene que confirmar el correo. */
+export type SignUpResult = AuthResult | { user: null; error: null; needsConfirmation: true };
 
 export interface SignUpInput {
   /** Nombre de la persona o de la empresa, según el rol. */
@@ -35,7 +41,9 @@ export interface AuthService {
    * Crear cuenta con correo y contraseña (solo Supabase). Si va bien, deja la sesión iniciada
    * con el rol de la tarjeta elegida.
    */
-  signUp?(input: SignUpInput): Promise<AuthResult>;
+  signUp?(input: SignUpInput): Promise<SignUpResult>;
+  /** Vuelve a enviar el correo "Confirma tu cuenta" (solo Supabase). */
+  resendConfirmation?(email: string): Promise<{ error: string | null }>;
   /**
    * Entrar con Google (solo Supabase). Sale de la web hacia Google y vuelve; al volver,
    * `getSession()` devuelve la sesión con el rol elegido.

@@ -16,6 +16,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '../../auth/demoAccounts';
 import type { UserRole, UserSession } from '../../types';
 import type { BackdropVariant } from './LoginBackdrop';
 import { useSmoothCardHeight } from './useSmoothCardHeight';
+import GoogleButton from './GoogleButton';
 import type { CardElements } from './useSmoothCardHeight';
 import fadLogoUrl from '../../assets/brand/fad-juventud-light.png';
 
@@ -472,17 +473,34 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: UserSession) 
         </p>
       )}
 
-      {authService.signInWithGoogle && (
+      {authService.signInWithGoogle && formRole && (
         <>
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={isSubmittingAuth}
-            className="btn btn-secondary w-full"
-          >
-            {isSubmittingAuth ? <LoaderCircle className="w-4 h-4 animate-spin" aria-hidden="true" /> : <GoogleIcon />}
-            <span>{isSubmittingAuth ? 'Abriendo Google…' : 'Continuar con Google'}</span>
-          </button>
+          {/* Botón oficial de Google: la ventana de Google muestra orientador.fad.es. Si no carga,
+              queda el botón de siempre, que entra por redirección. */}
+          <GoogleButton
+            role={formRole}
+            context={isSignUp ? 'signup' : 'signin'}
+            onSignedIn={(user) => {
+              setAuthPassword('');
+              onLogin(user);
+            }}
+            onError={(message) => {
+              clearMessages();
+              setAuthError(message);
+            }}
+            onBusyChange={setIsSubmittingAuth}
+            fallback={
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isSubmittingAuth}
+                className="btn btn-secondary w-full"
+              >
+                {isSubmittingAuth ? <LoaderCircle className="w-4 h-4 animate-spin" aria-hidden="true" /> : <GoogleIcon />}
+                <span>{isSubmittingAuth ? 'Abriendo Google…' : 'Continuar con Google'}</span>
+              </button>
+            }
+          />
           <div className="flex items-center gap-3 my-3 text-meta text-fg-3" aria-hidden="true">
             <span className="h-px flex-1 bg-line" />
             o con tu correo

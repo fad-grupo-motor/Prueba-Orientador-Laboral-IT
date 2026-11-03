@@ -50,6 +50,11 @@ export interface AuthService {
    */
   signInWithGoogle?(role: UserRole): Promise<{ error: string | null }>;
   /**
+   * Entrar con el botón oficial de Google (solo Supabase): Google devuelve un token sin salir de la web
+   * y aquí se canjea por la sesión, con el rol de la tarjeta elegida. `nonce` es el valor sin cifrar.
+   */
+  signInWithGoogleIdToken?(role: UserRole, idToken: string, nonce: string): Promise<AuthResult>;
+  /**
    * Error de la última vuelta a la web (desde Google o desde un enlace de correo), con la tarjeta
    * que se había elegido si se sabe (`role: null` si no). Leerlo no lo borra (React en modo
    * estricto lee dos veces); se borra en el siguiente intento de entrar.

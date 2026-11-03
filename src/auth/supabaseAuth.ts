@@ -217,6 +217,28 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
       return { error: null };
     },
 
+    async signInWithGoogleIdToken(role, idToken, nonce) {
+      redirectError = null;
+      const { data, error } = await supabase.auth.signInWithIdToken({ provider: 'google', token: idToken, nonce });
+      if (error || !data.user) {
+        console.error('[auth] signInWithIdToken failed:', error?.code, error?.message);
+        return { user: null, error: 'No se ha podido entrar con Google. Inténtalo de nuevo.' };
+      }
+
+      // Same rules as the redirect flow: the role is saved once; the other profile's card is rejected.
+      const existing = await fetchRole();
+      if (existing && existing !== role) {
+        await supabase.auth.signOut();
+        return { user: null, error: roleMismatchMessage(existing) };
+      }
+      const finalRole = existing ?? (await saveRole(role));
+      if (!finalRole) {
+        await supabase.auth.signOut();
+        return { user: null, error: 'No hemos podido terminar el registro. Inténtalo de nuevo.' };
+      }
+      return { user: { email: data.user.email ?? '', name: displayName(data.user), role: finalRole }, error: null };
+    },
+
     getRedirectError() {
       return redirectError;
     },

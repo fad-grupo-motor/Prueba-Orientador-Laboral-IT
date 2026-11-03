@@ -31,6 +31,14 @@ export interface SignUpInput {
   role: UserRole;
 }
 
+/** Datos de acceso para la pestaña "Mi cuenta". */
+export interface AccountInfo {
+  /** Entra con Google. */
+  google: boolean;
+  /** Tiene contraseña (cuenta de correo, o la creó después desde "Mi cuenta"). */
+  hasPassword: boolean;
+}
+
 /** Longitud mínima de contraseña. Debe coincidir con la de Supabase (Authentication → Email). */
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -69,6 +77,12 @@ export interface AuthService {
   isPasswordRecovery?(): boolean;
   /** Guarda la contraseña nueva de la persona que ha entrado desde el enlace de recuperación. */
   updatePassword?(password: string): Promise<AuthResult>;
+  /** Cómo entra la persona (solo Supabase). Para la pestaña "Mi cuenta". */
+  getAccount?(): Promise<AccountInfo | null>;
+  /** Cambia el nombre (o el nombre de la empresa) y devuelve la sesión actualizada (solo Supabase). */
+  updateName?(name: string): Promise<AuthResult>;
+  /** Borra la cuenta y todos sus datos para siempre, y cierra la sesión (solo Supabase). */
+  deleteAccount?(): Promise<{ error: string | null }>;
   /** Elimina la sesión activa. */
   signOut(): Promise<void>;
   /** Devuelve la sesión guardada si sigue siendo válida. */

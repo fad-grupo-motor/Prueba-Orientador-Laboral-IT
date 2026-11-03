@@ -12,6 +12,7 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import type { UserRole, UserSession } from '../types';
 import { roleMismatchMessage } from './messages';
+import { clearUserBrowserData } from '../lib/clearUserBrowserData';
 import type { AuthService } from './authService';
 
 /** Role clicked before going to Google; read and removed when coming back. */
@@ -275,7 +276,8 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
     },
 
     async updatePassword(password) {
-      const { data, error } = await supabase.auth.updateUser({ password });
+      // has_password: Supabase does not tell the web whether a Google account also has a password.
+      const { data, error } = await supabase.auth.updateUser({ password, data: { has_password: true } });
       if (error || !data.user) {
         console.error('[auth] updateUser failed:', error?.code, error?.message);
         if (error?.code === 'same_password') {
@@ -290,6 +292,54 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
       const user = await toSession(data.user);
       if (!user) return { user: null, error: 'Tu cuenta no tiene un perfil asignado. Escríbenos para revisarlo.' };
       return { user, error: null };
+    },
+
+    async getAccount() {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data.user) {
+        console.error('[auth] getUser failed:', error?.message);
+        return null;
+      }
+      const providers = (data.user.identities ?? []).map(identity => identity.provider);
+      const meta = data.user.user_metadata as { has_password?: boolean } | undefined;
+      return {
+        google: providers.includes('google'),
+        hasPassword: providers.includes('email') || meta?.has_password === true
+      };
+    },
+
+    async updateName(name) {
+      const trimmed = name.trim();
+      const { data: userData } = await supabase.auth.getUser();
+      const role = await fetchRole();
+      if (!userData.user || !role) {
+        return { user: null, error: 'No se ha podido guardar el nombre. Vuelve a entrar e inténtalo de nuevo.' };
+      }
+
+      // The profile row (profiles / companies) and the name shown in the panel (auth metadata).
+      const { error: rowError } = role === 'young'
+        ? await supabase.from('profiles').update({ first_name: trimmed }).eq('id', userData.user.id)
+        : await supabase.from('companies').update({ company_name: trimmed }).eq('id', userData.user.id);
+      const { data, error } = await supabase.auth.updateUser({ data: { full_name: trimmed } });
+      if (rowError || error || !data.user) {
+        console.error('[auth] updateName failed:', rowError?.message, error?.message);
+        return { user: null, error: 'No se ha podido guardar el nombre. Inténtalo de nuevo.' };
+      }
+      return { user: { email: data.user.email ?? '', name: displayName(data.user), role }, error: null };
+    },
+
+    async deleteAccount() {
+      const { data: userData } = await supabase.auth.getUser();
+      const { error } = await supabase.rpc('delete_my_account');
+      if (error) {
+        console.error('[auth] delete_my_account failed:', error.message);
+        return { error: 'No se ha podido eliminar la cuenta. Inténtalo de nuevo.' };
+      }
+      if (userData.user?.email) clearUserBrowserData(userData.user.email);
+      // The user no longer exists on the server: only clear the session in this browser.
+      recoveryMode = false;
+      await supabase.auth.signOut({ scope: 'local' });
+      return { error: null };
     },
 
     async signOut() {

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
-import { LogOut, Pause, Sparkles } from 'lucide-react';
+import { LogOut, Pause, Sparkles, UserCog } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import fadLogo from '../../assets/brand/fad-juventud-light.png';
@@ -33,6 +33,8 @@ interface ShellProps {
   activeId: string;
   onSelect: (id: string) => void;
   onLogout: () => void;
+  /** Abre la pestaña "Mi cuenta" (desde la tarjeta de usuario y el menú del móvil). */
+  onOpenAccount?: () => void;
   /** Muestra el selector de fondo (quieto o animado). Por defecto, sí; el portal de empresa lo oculta. */
   showBackdropToggle?: boolean;
 }
@@ -113,8 +115,17 @@ export function Sidebar({
   activeId,
   onSelect,
   onLogout,
+  onOpenAccount,
   showBackdropToggle = true,
 }: ShellProps) {
+  const userCard = (
+    <>
+      <p className="text-sm font-semibold text-fg truncate">{userName}</p>
+      <p className="text-meta text-fg-3 truncate mt-0.5">{userEmail}</p>
+      <span className="badge-technical mt-2">{roleLabel}</span>
+    </>
+  );
+
   return (
     <aside className="w-64 sticky top-0 h-dvh overflow-y-auto bg-surface border-r border-line hidden md:flex flex-col justify-between shrink-0">
       <div>
@@ -126,11 +137,20 @@ export function Sidebar({
           </div>
         </div>
 
-        <div className="mx-4 my-4 card p-3">
-          <p className="text-sm font-semibold text-fg truncate">{userName}</p>
-          <p className="text-meta text-fg-3 truncate mt-0.5">{userEmail}</p>
-          <span className="badge-technical mt-2">{roleLabel}</span>
-        </div>
+        {/* La tarjeta de la persona lleva a "Mi cuenta" (ajustes, cerrar sesión, eliminar la cuenta). */}
+        {onOpenAccount ? (
+          <button
+            type="button"
+            onClick={onOpenAccount}
+            aria-label={`Mi cuenta: ${userName}`}
+            aria-current={activeId === 'account' ? 'page' : undefined}
+            className="mx-4 my-4 card p-3 block w-[calc(100%-2rem)] text-left hover:border-line-strong transition-colors"
+          >
+            {userCard}
+          </button>
+        ) : (
+          <div className="mx-4 my-4 card p-3">{userCard}</div>
+        )}
 
         <nav className="py-2 space-y-0.5" aria-label="Secciones del panel">
           {items.map(item => (
@@ -255,6 +275,7 @@ export function MobileHeader({
   activeId,
   onSelect,
   onLogout,
+  onOpenAccount,
   showBackdropToggle = true,
 }: ShellProps) {
   const navRef = useRef<HTMLElement>(null);
@@ -297,8 +318,10 @@ export function MobileHeader({
           type="button"
           popoverTarget={menuId}
           aria-label={`Tu cuenta y ajustes: ${userName}`}
-          className="btn btn-ghost btn-icon shrink-0"
+          className="btn btn-ghost shrink-0 gap-2 px-2"
         >
+          {/* Con texto, para que se vea que aquí están la cuenta y "Cerrar sesión". */}
+          <span aria-hidden="true" className="text-meta font-semibold text-fg-2">Cuenta</span>
           <span
             aria-hidden="true"
             className="w-8 h-8 grid place-items-center rounded-full bg-accent-soft border border-accent/50 text-accent-strong text-meta font-bold"
@@ -313,6 +336,19 @@ export function MobileHeader({
         <p className="text-meta text-fg-3 truncate mt-0.5">{userEmail}</p>
         <span className="badge-technical mt-2">{roleLabel}</span>
         <div className="mt-4 pt-4 border-t border-line space-y-3">
+          {onOpenAccount && (
+            <button
+              type="button"
+              onClick={() => {
+                menuRef.current?.hidePopover();
+                onOpenAccount();
+              }}
+              className="btn btn-secondary w-full"
+            >
+              <UserCog className="w-4 h-4" aria-hidden="true" />
+              Mi cuenta
+            </button>
+          )}
           {showBackdropToggle && <BackdropToggle />}
           <LogoutButton onLogout={onLogout} />
         </div>

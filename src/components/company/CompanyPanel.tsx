@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Building2, FilePlus2, Inbox } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, FilePlus2, Inbox, UserCog } from 'lucide-react';
 
 import type { Application, JobOffer, UserSession } from '../../types';
 import { OFFERS_CHANGED_EVENT, offersService } from '../../services/offersService';
@@ -20,15 +20,20 @@ import VacancyForm from './VacancyForm';
 import VacanciesList from './VacanciesList';
 import ApplicantsBoard from './ApplicantsBoard';
 import ImpactStats from './ImpactStats';
+import AccountSettings from '../account/AccountSettings';
 
-type CompanyTab = 'publish' | 'vacancies' | 'impact';
+type CompanyTab = 'publish' | 'vacancies' | 'impact' | 'account';
 
 interface CompanyPanelProps {
   user: UserSession;
   onLogout: () => void;
+  /** Nombre cambiado en "Mi cuenta". */
+  onUserChange: (user: UserSession) => void;
+  /** Cuenta eliminada en "Mi cuenta". */
+  onAccountDeleted: () => void;
 }
 
-export default function CompanyPanel({ user, onLogout }: CompanyPanelProps) {
+export default function CompanyPanel({ user, onLogout, onUserChange, onAccountDeleted }: CompanyPanelProps) {
   const [tab, setTab] = useState<CompanyTab>('vacancies');
   const [offers, setOffers] = useState<JobOffer[]>([]);
   const [applicationsByOffer, setApplicationsByOffer] = useState<Record<string, Application[]>>({});
@@ -89,7 +94,8 @@ export default function CompanyPanel({ user, onLogout }: CompanyPanelProps) {
   const navItems: NavItem[] = [
     { id: 'publish', label: 'Publicar vacante', shortLabel: 'Publicar', icon: FilePlus2 },
     { id: 'vacancies', label: `Vacantes y candidaturas${unseenSuffix}`, shortLabel: `Vacantes${unseenSuffix}`, icon: Inbox },
-    { id: 'impact', label: 'Impacto', shortLabel: 'Impacto', icon: BarChart3 }
+    { id: 'impact', label: 'Impacto', shortLabel: 'Impacto', icon: BarChart3 },
+    { id: 'account', label: 'Mi cuenta', shortLabel: 'Cuenta', icon: UserCog }
   ];
 
   const shell = {
@@ -102,6 +108,7 @@ export default function CompanyPanel({ user, onLogout }: CompanyPanelProps) {
     activeId: tab,
     onSelect: (id: string) => goTo(id as CompanyTab),
     onLogout,
+    onOpenAccount: () => goTo('account'),
     // El portal de empresa es una herramienta de trabajo: sin selector de fondo animado.
     showBackdropToggle: false
   };
@@ -162,6 +169,15 @@ export default function CompanyPanel({ user, onLogout }: CompanyPanelProps) {
           )}
 
           {tab === 'impact' && <ImpactStats offers={offers} applicationsByOffer={applicationsByOffer} />}
+
+          {tab === 'account' && (
+            <AccountSettings
+              user={user}
+              onLogout={onLogout}
+              onUserChange={onUserChange}
+              onAccountDeleted={onAccountDeleted}
+            />
+          )}
         </div>
       </main>
     </div>

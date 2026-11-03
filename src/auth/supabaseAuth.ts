@@ -19,6 +19,15 @@ const PENDING_ROLE_KEY = 'orientador_pending_oauth_role';
 
 type DbRole = 'talent' | 'company';
 
+/**
+ * Sign-up with an email that already has an account. Supabase does not say whether that account was
+ * created with Google or with email + password, so the text covers both.
+ */
+const ACCOUNT_EXISTS_MESSAGE =
+  'Ya hay una cuenta con este correo. Si la creaste con Google, entra con «Continuar con Google» ' +
+  '(después puedes añadir una contraseña en «Mi cuenta»). Si la creaste con correo, inicia sesión ' +
+  'o usa «¿Has olvidado tu contraseña?».';
+
 const toDbRole = (role: UserRole): DbRole => (role === 'young' ? 'talent' : 'company');
 const fromDbRole = (role: DbRole): UserRole => (role === 'talent' ? 'young' : 'company');
 
@@ -154,9 +163,9 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
         options: { data: { initial_role: toDbRole(role), full_name: name.trim() } }
       });
       if (error) {
-        console.error('[auth] signUp failed:', error.code, error.message);
+        console.error('[auth] signUp failed:', error.code, error.status, error.message);
         if (error.code === 'user_already_exists') {
-          return { user: null, error: 'Ya hay una cuenta con este correo. Inicia sesión.' };
+          return { user: null, error: ACCOUNT_EXISTS_MESSAGE };
         }
         if (error.code === 'weak_password') {
           return { user: null, error: 'La contraseña es demasiado débil. Usa al menos 8 caracteres y evita las muy comunes.' };
@@ -164,11 +173,18 @@ export function supabaseAuthService(supabase: SupabaseClient): AuthService {
         if (error.code === 'over_email_send_rate_limit' || error.code === 'email_address_not_authorized') {
           return { user: null, error: 'Ahora mismo no podemos crear cuentas con correo. Prueba con Google.' };
         }
+        // 500: Supabase could not send the confirmation email (e.g. the SMTP key is wrong).
+        if (error.status === 500 || error.code === 'unexpected_failure') {
+          return { user: null, error: 'No hemos podido enviar el correo de confirmación. Inténtalo de nuevo en unos minutos o entra con Google.' };
+        }
         return { user: null, error: 'No se ha podido crear la cuenta. Inténtalo de nuevo.' };
       }
+      // Email that already had an account: with "Confirm email" on, Supabase sends nothing and returns
+      // a user with no identities. Say so, instead of "we have sent you an email".
+      if (data.user && data.user.identities?.length === 0) {
+        return { user: null, error: ACCOUNT_EXISTS_MESSAGE };
+      }
       // With "Confirm email" on in Supabase there is no session until the email link is opened.
-      // (If the email already had an account, Supabase answers the same way on purpose: it does not
-      // reveal who is registered.)
       if (!data.session || !data.user) {
         return { user: null, error: null, needsConfirmation: true };
       }
